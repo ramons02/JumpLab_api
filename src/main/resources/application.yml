@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: jumplab-api
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  jackson:
+    time-zone: America/Sao_Paulo
+
+server:
+  port: 8080
