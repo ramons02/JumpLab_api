@@ -130,6 +130,11 @@ class TrocaSenhaControllerIT extends AbstractIntegrationTest {
             .expectBody().jsonPath("$.mensagem").isEqualTo("Crie sua senha nova para continuar.");
         restClient.get().uri("/api/admin/pedidos").header("Authorization", "Bearer " + token)
             .exchange().expectStatus().isForbidden();
+        post(restClient, "/api/sync/enviar", Map.of("registros", java.util.List.of()), token)
+            .expectStatus().isForbidden()
+            .expectBody().jsonPath("$.mensagem").isEqualTo("Crie sua senha nova para continuar.");
+        restClient.get().uri("/api/sync/receber?desde=0&limite=10").header("Authorization", "Bearer " + token)
+            .exchange().expectStatus().isForbidden();
         post(restClient, "/api/auth/sair", Map.of("tokenRenovacao", tokenRenovacao(pendente)))
             .expectStatus().isNoContent();
     }
