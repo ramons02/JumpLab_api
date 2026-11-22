@@ -23,7 +23,15 @@ Back-end de sincronização e autenticação do JumpLab. Regras do projeto na co
 | `POST /api/auth/entrar` | pública |
 | `POST /api/auth/renovar` | pública; troca o token de renovação por um par novo |
 | `POST /api/auth/sair` | pública; revoga o token de renovação |
+| `POST /api/recuperacao/pedidos` | pública; pede a recuperação de senha (sempre 202) |
+| `GET /api/admin/pedidos` | administrador; caixa de pedidos de recuperação |
+| `POST /api/admin/pedidos/{id}/senha-temporaria` | administrador; gera a senha temporária (24 h, uma entrada) |
+| `POST /api/conta/senha` | só a sessão aberta pela senha temporária; cria a senha nova |
 | qualquer outra | `Authorization: Bearer <token de acesso>` |
+
+A sessão aberta pela senha temporária leva o claim `troca_senha` e só pode criar a senha nova (as demais
+rotas protegidas respondem 403). O administrador é marcado direto no banco (`usuario.admin`), pelo
+`scripts/marcar-admin.sh` do `JumpLab_infra`.
 
 Contrato completo em `specs/012-conta-e-login/contracts/api.md` do `JumpLab_documentacao`. Toda resposta,
 inclusive de erro, usa o envelope `ApiResponse` (`sucesso`, `mensagem`, `dados`, `erros`).

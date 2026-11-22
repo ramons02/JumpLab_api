@@ -17,4 +17,6 @@ public class TokenRenovacaoModel extends BaseModel {
     private Instant expiraEm;
     private Instant usadoEm;
     private Instant revogadoEm;
+    /** Sessão aberta pela senha temporária; copiada na renovação (spec 016, R2). */
+    private boolean trocaSenhaPendente;
 }

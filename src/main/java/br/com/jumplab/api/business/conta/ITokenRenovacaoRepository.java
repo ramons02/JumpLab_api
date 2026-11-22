@@ -13,4 +13,7 @@ public interface ITokenRenovacaoRepository extends IGenericRepository<TokenRenov
     boolean marcarUsado(Long id);
 
     void revogar(String tokenHash);
+
+    /** Revoga as sessões de troca pendente do usuário, depois de ele criar a senha nova. */
+    void revogarPendentesDoUsuario(Long usuarioId);
 }

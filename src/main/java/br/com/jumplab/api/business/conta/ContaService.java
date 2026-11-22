@@ -1,23 +1,16 @@
 package br.com.jumplab.api.business.conta;
 
+import br.com.jumplab.api.business.recuperacao.ISenhaTemporariaRepository;
+import br.com.jumplab.api.business.recuperacao.SenhaTemporariaModel;
 import br.com.jumplab.api.core.exceptions.BusinessException;
 import br.com.jumplab.api.core.exceptions.CredenciaisInvalidasException;
 import br.com.jumplab.api.core.exceptions.SessaoInvalidaException;
-import br.com.jumplab.api.core.seguranca.JwtService;
-import br.com.jumplab.api.core.seguranca.PropriedadesJwt;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Base64;
-import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -26,28 +19,26 @@ public class ContaService implements IContaService {
 
     static final String MENSAGEM_EMAIL_REPETIDO = "Já existe conta com este e-mail.";
 
-    private static final int TAMANHO_TOKEN_RENOVACAO_BYTES = 32;
     /** Senha usada só para gerar o hash comparado quando o e-mail não existe (tempo igual). */
     private static final String SENHA_DE_REFERENCIA = "senha-de-referencia-para-email-inexistente";
 
     private final IUsuarioRepository usuarios;
     private final ITokenRenovacaoRepository tokens;
+    private final ISenhaTemporariaRepository senhasTemporarias;
     private final IContaValidation validacao;
     private final PasswordEncoder codificadorDeSenha;
-    private final JwtService jwtService;
-    private final Duration validadeRenovacao;
-    private final SecureRandom aleatorio = new SecureRandom();
+    private final EmissorSessao emissor;
     private final String hashDeReferencia;
 
     public ContaService(IUsuarioRepository usuarios, ITokenRenovacaoRepository tokens,
-                        IContaValidation validacao, PasswordEncoder codificadorDeSenha,
-                        JwtService jwtService, PropriedadesJwt propriedadesJwt) {
+                        ISenhaTemporariaRepository senhasTemporarias, IContaValidation validacao,
+                        PasswordEncoder codificadorDeSenha, EmissorSessao emissor) {
         this.usuarios = usuarios;
         this.tokens = tokens;
+        this.senhasTemporarias = senhasTemporarias;
         this.validacao = validacao;
         this.codificadorDeSenha = codificadorDeSenha;
-        this.jwtService = jwtService;
-        this.validadeRenovacao = Duration.ofDays(propriedadesJwt.renovacaoDias());
+        this.emissor = emissor;
         this.hashDeReferencia = codificadorDeSenha.encode(SENHA_DE_REFERENCIA);
     }
 
@@ -64,9 +55,13 @@ public class ContaService implements IContaService {
         novo.setNome(normalizado.nome());
         novo.setEmail(normalizado.email());
         novo.setSenhaHash(codificadorDeSenha.encode(normalizado.senha()));
-        return emitirSessao(salvarSemRepetirEmail(novo));
+        return emissor.emitir(salvarSemRepetirEmail(novo), false);
     }
 
+    /**
+     * A senha normal vale sempre (HU016 RN10). Se ela não bater, uma senha temporária válida abre a
+     * sessão com troca pendente e deixa de valer (uma entrada, research R1).
+     */
     @Override
     @Transactional
     public SessaoDTO entrar(EntrarRequest pedido) {
@@ -76,10 +71,16 @@ public class ContaService implements IContaService {
         Optional<UsuarioModel> usuario = usuarios.buscarPorEmail(normalizarEmail(pedido.email()));
         String hash = usuario.map(UsuarioModel::getSenhaHash).orElse(hashDeReferencia);
         boolean senhaConfere = codificadorDeSenha.matches(pedido.senha(), hash);
-        if (usuario.isEmpty() || !senhaConfere || !usuario.get().isAtivo()) {
+        if (usuario.isEmpty() || !usuario.get().isAtivo()) {
             throw new CredenciaisInvalidasException();
         }
-        return emitirSessao(usuario.get());
+        if (senhaConfere) {
+            return emissor.emitir(usuario.get(), false);
+        }
+        if (entrouPelaSenhaTemporaria(usuario.get().getId(), pedido.senha())) {
+            return emissor.emitir(usuario.get(), true);
+        }
+        throw new CredenciaisInvalidasException();
     }
 
     @Override
@@ -89,7 +90,7 @@ public class ContaService implements IContaService {
         if (valor == null || valor.isBlank()) {
             throw new SessaoInvalidaException();
         }
-        TokenRenovacaoModel token = tokens.buscarValidoPorHash(sha256(valor))
+        TokenRenovacaoModel token = tokens.buscarValidoPorHash(EmissorSessao.sha256(valor))
             .orElseThrow(SessaoInvalidaException::new);
         if (!tokens.marcarUsado(token.getId())) {
             throw new SessaoInvalidaException();
@@ -97,15 +98,43 @@ public class ContaService implements IContaService {
         UsuarioModel usuario = usuarios.buscarPorId(token.getUsuarioId())
             .filter(UsuarioModel::isAtivo)
             .orElseThrow(SessaoInvalidaException::new);
-        return emitirSessao(usuario);
+        return emissor.emitir(usuario, token.isTrocaSenhaPendente());
     }
 
     @Override
     @Transactional
     public void sair(RenovarRequest pedido) {
         if (pedido != null && pedido.tokenRenovacao() != null && !pedido.tokenRenovacao().isBlank()) {
-            tokens.revogar(sha256(pedido.tokenRenovacao()));
+            tokens.revogar(EmissorSessao.sha256(pedido.tokenRenovacao()));
         }
+    }
+
+    /**
+     * Grava a senha nova de quem entrou pela temporária: as temporárias abertas e a sessão pendente deixam
+     * de valer, e volta uma sessão normal (research R3).
+     */
+    @Override
+    @Transactional
+    public SessaoDTO criarSenhaNova(Long usuarioId, SenhaNovaRequest pedido) {
+        ContaValidation.validarSenha(pedido == null ? null : pedido.senhaNova());
+        UsuarioModel usuario = usuarios.buscarPorId(usuarioId)
+            .filter(UsuarioModel::isAtivo)
+            .orElseThrow(SessaoInvalidaException::new);
+        usuario.setSenhaHash(codificadorDeSenha.encode(pedido.senhaNova()));
+        usuarios.atualizar(usuario);
+        senhasTemporarias.invalidarAbertasDoUsuario(usuarioId);
+        tokens.revogarPendentesDoUsuario(usuarioId);
+        return emissor.emitir(usuario, false);
+    }
+
+    private boolean entrouPelaSenhaTemporaria(Long usuarioId, String senhaDigitada) {
+        String normalizada = senhaDigitada.strip().toUpperCase(Locale.ROOT);
+        for (SenhaTemporariaModel temporaria : senhasTemporarias.listarValidasDoUsuario(usuarioId)) {
+            if (codificadorDeSenha.matches(normalizada, temporaria.getSenhaHash())) {
+                return senhasTemporarias.marcarUsada(temporaria.getId());
+            }
+        }
+        return false;
     }
 
     private UsuarioModel salvarSemRepetirEmail(UsuarioModel novo) {
@@ -116,43 +145,12 @@ public class ContaService implements IContaService {
         }
     }
 
-    private SessaoDTO emitirSessao(UsuarioModel usuario) {
-        String tokenAcesso = jwtService.emitir(usuario.getId(), usuario.getEmail(), usuario.isAdmin());
-        String tokenRenovacao = gerarTokenOpaco();
-        Instant agora = Instant.now();
-
-        TokenRenovacaoModel registro = new TokenRenovacaoModel();
-        registro.setUsuarioId(usuario.getId());
-        registro.setTokenHash(sha256(tokenRenovacao));
-        registro.setEmitidoEm(agora);
-        registro.setExpiraEm(agora.plus(validadeRenovacao));
-        tokens.salvar(registro);
-
-        return new SessaoDTO(tokenAcesso, tokenRenovacao, jwtService.validadeAcessoEmSegundos(),
-            UsuarioMapper.paraConta(usuario));
-    }
-
-    private String gerarTokenOpaco() {
-        byte[] bytes = new byte[TAMANHO_TOKEN_RENOVACAO_BYTES];
-        aleatorio.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
     private static boolean senhaAceitaPeloBcrypt(String senha) {
         return senha != null
             && senha.getBytes(StandardCharsets.UTF_8).length <= ContaValidation.SENHA_MAXIMA_BYTES;
     }
 
-    static String normalizarEmail(String email) {
+    public static String normalizarEmail(String email) {
         return email == null ? null : email.strip().toLowerCase(Locale.ROOT);
-    }
-
-    static String sha256(String valor) {
-        try {
-            byte[] resumo = MessageDigest.getInstance("SHA-256").digest(valor.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(resumo);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 indisponível na JVM", e);
-        }
     }
 }

@@ -18,8 +18,8 @@ public class TokenRenovacaoRepositoryImpl extends AbstractRepository<TokenRenova
     implements ITokenRenovacaoRepository {
 
     private static final String INSERIR = """
-        INSERT INTO token_renovacao (usuario_id, token_hash, emitido_em, expira_em)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO token_renovacao (usuario_id, token_hash, emitido_em, expira_em, troca_senha_pendente)
+        VALUES (?, ?, ?, ?, ?)
         """;
     private static final String ATUALIZAR = """
         UPDATE token_renovacao SET usado_em = ?, revogado_em = ?
@@ -35,6 +35,11 @@ public class TokenRenovacaoRepositoryImpl extends AbstractRepository<TokenRenova
     private static final String REVOGAR = """
         UPDATE token_renovacao SET revogado_em = now()
         WHERE token_hash = ? AND revogado_em IS NULL
+        """;
+
+    private static final String REVOGAR_PENDENTES = """
+        UPDATE token_renovacao SET revogado_em = now()
+        WHERE usuario_id = ? AND troca_senha_pendente AND revogado_em IS NULL
         """;
 
     public TokenRenovacaoRepositoryImpl(JdbcTemplate jdbc) {
@@ -57,6 +62,7 @@ public class TokenRenovacaoRepositoryImpl extends AbstractRepository<TokenRenova
             token.setExpiraEm(instante(rs.getTimestamp("expira_em")));
             token.setUsadoEm(instante(rs.getTimestamp("usado_em")));
             token.setRevogadoEm(instante(rs.getTimestamp("revogado_em")));
+            token.setTrocaSenhaPendente(rs.getBoolean("troca_senha_pendente"));
             token.setDataHoraCriacao(new Date(rs.getTimestamp("data_hora_criacao").getTime()));
             token.setAtivo(rs.getBoolean("ativo"));
             return token;
@@ -80,6 +86,11 @@ public class TokenRenovacaoRepositoryImpl extends AbstractRepository<TokenRenova
     }
 
     @Override
+    public void revogarPendentesDoUsuario(Long usuarioId) {
+        jdbc.update(REVOGAR_PENDENTES, usuarioId);
+    }
+
+    @Override
     public TokenRenovacaoModel salvar(TokenRenovacaoModel token) {
         KeyHolder chave = new GeneratedKeyHolder();
         jdbc.update(conexao -> {
@@ -88,6 +99,7 @@ public class TokenRenovacaoRepositoryImpl extends AbstractRepository<TokenRenova
             comando.setString(2, token.getTokenHash());
             comando.setTimestamp(3, Timestamp.from(token.getEmitidoEm()));
             comando.setTimestamp(4, Timestamp.from(token.getExpiraEm()));
+            comando.setBoolean(5, token.isTrocaSenhaPendente());
             return comando;
         }, chave);
         return buscarPorId(chave.getKeyAs(Long.class)).orElseThrow();
