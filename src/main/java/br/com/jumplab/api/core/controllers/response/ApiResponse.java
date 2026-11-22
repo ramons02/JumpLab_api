@@ -26,6 +26,10 @@ public class ApiResponse<T> {
         return new ApiResponse<>(true, "Recurso criado com sucesso", dados, null);
     }
 
+    public static <T> ApiResponse<T> criado(String mensagem, T dados) {
+        return new ApiResponse<>(true, mensagem, dados, null);
+    }
+
     public static <T> ApiResponse<T> erro(String mensagem) {
         return new ApiResponse<>(false, mensagem, null, List.of(mensagem));
     }

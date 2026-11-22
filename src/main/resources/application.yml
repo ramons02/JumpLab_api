@@ -6,8 +6,20 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
+  flyway:
+    validate-on-migrate: true
   jackson:
     time-zone: America/Sao_Paulo
 
 server:
   port: 8080
+
+jumplab:
+  jwt:
+    segredo: ${JUMPLAB_JWT_SEGREDO}
+    acesso-minutos: ${JUMPLAB_JWT_ACESSO_MINUTOS:15}
+    renovacao-dias: ${JUMPLAB_JWT_RENOVACAO_DIAS:30}
+
+logging:
+  level:
+    org.springframework.security: WARN

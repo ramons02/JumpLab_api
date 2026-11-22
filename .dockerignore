@@ -1,0 +1,7 @@
+target/
+.git/
+.githooks/
+.env
+.env.*
+.idea/
+.vscode/
