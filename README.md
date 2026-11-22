@@ -23,6 +23,8 @@ Back-end de sincronização e autenticação do JumpLab. Regras do projeto na co
 | `POST /api/auth/entrar` | pública |
 | `POST /api/auth/renovar` | pública; troca o token de renovação por um par novo |
 | `POST /api/auth/sair` | pública; revoga o token de renovação |
+| `POST /api/sync/enviar` | protegida; grava até 100 pacientes e avaliações do aparelho (vence a alteração mais recente; até 2 MB) |
+| `GET /api/sync/receber?desde=&limite=` | protegida; devolve os registros da conta mudados depois do cursor, em ordem de versão |
 | `POST /api/recuperacao/pedidos` | pública; pede a recuperação de senha (sempre 202) |
 | `GET /api/admin/pedidos` | administrador; caixa de pedidos de recuperação |
 | `POST /api/admin/pedidos/{id}/senha-temporaria` | administrador; gera a senha temporária (24 h, uma entrada) |
