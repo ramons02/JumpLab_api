@@ -14,6 +14,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 import java.util.Collection;
@@ -39,8 +40,10 @@ public class ConfiguracaoSeguranca {
             .logout(AbstractHttpConfigurer::disable)
             .sessionManagement(sessao -> sessao.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(rotas -> rotas
-                .requestMatchers("/api/auth/**", "/error").permitAll()
+                .requestMatchers("/api/auth/**", "/api/recuperacao/**", "/error").permitAll()
+                .requestMatchers("/api/admin/**").hasAuthority(PAPEL_ADMIN)
                 .anyRequest().authenticated())
+            .addFilterAfter(new FiltroTrocaSenhaPendente(tratador), BearerTokenAuthenticationFilter.class)
             .oauth2ResourceServer(servidor -> servidor
                 .jwt(jwt -> jwt.decoder(decodificador).jwtAuthenticationConverter(conversorDePapeis()))
                 .authenticationEntryPoint(tratador)

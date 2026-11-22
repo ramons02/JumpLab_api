@@ -9,4 +9,6 @@ public interface IContaService {
     SessaoDTO renovar(RenovarRequest pedido);
 
     void sair(RenovarRequest pedido);
+
+    SessaoDTO criarSenhaNova(Long usuarioId, SenhaNovaRequest pedido);
 }

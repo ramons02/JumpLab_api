@@ -42,7 +42,8 @@ public class TratadorAcessoNegado implements AuthenticationEntryPoint, AccessDen
         escrever(response, HttpStatus.FORBIDDEN, GlobalExceptionHandler.MENSAGEM_ACESSO_NEGADO);
     }
 
-    private void escrever(HttpServletResponse response, HttpStatus status, String mensagem) throws IOException {
+    /** Escreve a resposta de erro no envelope ApiResponse (usado também pelos filtros). */
+    public void escrever(HttpServletResponse response, HttpStatus status, String mensagem) throws IOException {
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

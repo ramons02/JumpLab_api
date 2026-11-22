@@ -44,12 +44,18 @@ public class ContaValidation extends GenericValidation<CadastroRequest> implemen
 
     @Override
     protected void validarEmail(String email) {
+        exigirEmailValido(email);
+    }
+
+    /** Também usada no pedido de recuperação (spec 016). */
+    public static void exigirEmailValido(String email) {
         if (email == null || email.length() > EMAIL_MAXIMO || !FORMATO_EMAIL.matcher(email).matches()) {
             throw new FieldValidationException("email", MENSAGEM_EMAIL);
         }
     }
 
-    private static void validarSenha(String senha) {
+    /** Também usada na senha nova da recuperação (spec 016). */
+    public static void validarSenha(String senha) {
         if (senha == null || senha.length() < SENHA_MINIMA) {
             throw new FieldValidationException("senha", MENSAGEM_SENHA_CURTA);
         }

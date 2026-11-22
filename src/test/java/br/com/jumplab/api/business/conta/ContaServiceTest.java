@@ -1,5 +1,7 @@
 package br.com.jumplab.api.business.conta;
 
+import br.com.jumplab.api.business.recuperacao.ISenhaTemporariaRepository;
+import br.com.jumplab.api.business.recuperacao.SenhaTemporariaModel;
 import br.com.jumplab.api.core.exceptions.BusinessException;
 import br.com.jumplab.api.core.exceptions.CredenciaisInvalidasException;
 import br.com.jumplab.api.core.exceptions.FieldValidationException;
@@ -13,9 +15,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,6 +41,7 @@ class ContaServiceTest {
     private final IUsuarioRepository usuarios = mock(IUsuarioRepository.class);
     private final ITokenRenovacaoRepository tokens = mock(ITokenRenovacaoRepository.class);
     private final IContaValidation validacao = mock(IContaValidation.class);
+    private final ISenhaTemporariaRepository temporarias = mock(ISenhaTemporariaRepository.class);
     private final PasswordEncoder codificador = mock(PasswordEncoder.class);
     private final JwtService jwt = new JwtService(new PropriedadesJwt("segredo-de-teste-com-mais-de-32-bytes-ok", 15, 30));
     private ContaService servico;
@@ -50,8 +56,9 @@ class ContaServiceTest {
             u.setAtivo(true);
             return u;
         });
-        servico = new ContaService(usuarios, tokens, validacao, codificador, jwt,
+        EmissorSessao emissor = new EmissorSessao(tokens, jwt,
             new PropriedadesJwt("segredo-de-teste-com-mais-de-32-bytes-ok", 15, 30));
+        servico = new ContaService(usuarios, tokens, temporarias, validacao, codificador, emissor);
     }
 
     // cadastro
@@ -100,7 +107,7 @@ class ContaServiceTest {
 
         ArgumentCaptor<TokenRenovacaoModel> registro = ArgumentCaptor.forClass(TokenRenovacaoModel.class);
         verify(tokens).salvar(registro.capture());
-        assertEquals(ContaService.sha256(sessao.tokenRenovacao()), registro.getValue().getTokenHash());
+        assertEquals(EmissorSessao.sha256(sessao.tokenRenovacao()), registro.getValue().getTokenHash());
         assertNotEquals(sessao.tokenRenovacao(), registro.getValue().getTokenHash());
         assertEquals(Duration.ofDays(30),
             Duration.between(registro.getValue().getEmitidoEm(), registro.getValue().getExpiraEm()));
@@ -164,7 +171,7 @@ class ContaServiceTest {
     @Test
     void renovarMarcaOTokenUsadoEEmiteOutro() {
         TokenRenovacaoModel atual = tokenDaAna();
-        when(tokens.buscarValidoPorHash(ContaService.sha256("valor-atual"))).thenReturn(Optional.of(atual));
+        when(tokens.buscarValidoPorHash(EmissorSessao.sha256("valor-atual"))).thenReturn(Optional.of(atual));
         when(tokens.marcarUsado(atual.getId())).thenReturn(true);
         when(usuarios.buscarPorId(1L)).thenReturn(Optional.of(ana()));
 
@@ -203,7 +210,7 @@ class ContaServiceTest {
     void sairRevogaPeloHash() {
         servico.sair(new RenovarRequest("valor-atual"));
 
-        verify(tokens).revogar(eq(ContaService.sha256("valor-atual")));
+        verify(tokens).revogar(eq(EmissorSessao.sha256("valor-atual")));
     }
 
     @Test
@@ -211,6 +218,96 @@ class ContaServiceTest {
         servico.sair(new RenovarRequest(null));
 
         verify(tokens, never()).revogar(anyString());
+    }
+
+    // senha temporária e senha nova (spec 016)
+
+    @Test
+    void senhaNormalCertaEntraSemTrocaMesmoComTemporariaAberta() {
+        when(usuarios.buscarPorEmail("ana@exemplo.com")).thenReturn(Optional.of(ana()));
+        when(codificador.matches("segredo123", HASH_DA_ANA)).thenReturn(true);
+
+        SessaoDTO sessao = servico.entrar(new EntrarRequest("ana@exemplo.com", "segredo123"));
+
+        assertFalse(sessao.trocaSenhaObrigatoria());
+        verify(temporarias, never()).marcarUsada(any());
+    }
+
+    @Test
+    void temporariaValidaEntraComTrocaPendenteEFicaUsada() {
+        when(usuarios.buscarPorEmail("ana@exemplo.com")).thenReturn(Optional.of(ana()));
+        when(temporarias.listarValidasDoUsuario(1L)).thenReturn(List.of(temporaria(5L, "hash-temp")));
+        when(codificador.matches("K7QM-3WZP", "hash-temp")).thenReturn(true);
+        when(temporarias.marcarUsada(5L)).thenReturn(true);
+
+        SessaoDTO sessao = servico.entrar(new EntrarRequest("ana@exemplo.com", " k7qm-3wzp "));
+
+        assertTrue(sessao.trocaSenhaObrigatoria());
+        assertTrue(jwt.ler(sessao.tokenAcesso()).getClaimAsBoolean(JwtService.CLAIM_TROCA_SENHA));
+        ArgumentCaptor<TokenRenovacaoModel> registro = ArgumentCaptor.forClass(TokenRenovacaoModel.class);
+        verify(tokens).salvar(registro.capture());
+        assertTrue(registro.getValue().isTrocaSenhaPendente());
+    }
+
+    @Test
+    void temporariaVencidaUsadaOuInvalidadaDaAMesmaMensagemDeSenhaErrada() {
+        when(usuarios.buscarPorEmail("ana@exemplo.com")).thenReturn(Optional.of(ana()));
+        when(temporarias.listarValidasDoUsuario(1L)).thenReturn(List.of());
+
+        var erro = assertThrows(CredenciaisInvalidasException.class,
+            () -> servico.entrar(new EntrarRequest("ana@exemplo.com", "K7QM-3WZP")));
+        assertEquals("E-mail ou senha inválidos.", erro.getMessage());
+    }
+
+    @Test
+    void temporariaQuePerdeACorridaNaoEntra() {
+        when(usuarios.buscarPorEmail("ana@exemplo.com")).thenReturn(Optional.of(ana()));
+        when(temporarias.listarValidasDoUsuario(1L)).thenReturn(List.of(temporaria(5L, "hash-temp")));
+        when(codificador.matches("K7QM-3WZP", "hash-temp")).thenReturn(true);
+        when(temporarias.marcarUsada(5L)).thenReturn(false);
+
+        assertThrows(CredenciaisInvalidasException.class,
+            () -> servico.entrar(new EntrarRequest("ana@exemplo.com", "K7QM-3WZP")));
+    }
+
+    @Test
+    void renovarMantemATrocaPendente() {
+        TokenRenovacaoModel atual = tokenDaAna();
+        atual.setTrocaSenhaPendente(true);
+        when(tokens.buscarValidoPorHash(anyString())).thenReturn(Optional.of(atual));
+        when(tokens.marcarUsado(atual.getId())).thenReturn(true);
+        when(usuarios.buscarPorId(1L)).thenReturn(Optional.of(ana()));
+
+        assertTrue(servico.renovar(new RenovarRequest("valor-atual")).trocaSenhaObrigatoria());
+    }
+
+    @Test
+    void criarSenhaNovaGravaOHashInvalidaTemporariasERevogaASessaoPendente() {
+        when(usuarios.buscarPorId(1L)).thenReturn(Optional.of(ana()));
+
+        SessaoDTO sessao = servico.criarSenhaNova(1L, new SenhaNovaRequest("novaSenha123"));
+
+        ArgumentCaptor<UsuarioModel> atualizado = ArgumentCaptor.forClass(UsuarioModel.class);
+        verify(usuarios).atualizar(atualizado.capture());
+        assertEquals("bcrypt(novaSenha123)", atualizado.getValue().getSenhaHash());
+        verify(temporarias).invalidarAbertasDoUsuario(1L);
+        verify(tokens).revogarPendentesDoUsuario(1L);
+        assertFalse(sessao.trocaSenhaObrigatoria());
+    }
+
+    @Test
+    void senhaNovaCurtaERecusada() {
+        assertThrows(FieldValidationException.class,
+            () -> servico.criarSenhaNova(1L, new SenhaNovaRequest("1234567")));
+        verify(usuarios, never()).atualizar(any());
+    }
+
+    private static SenhaTemporariaModel temporaria(Long id, String hash) {
+        SenhaTemporariaModel t = new SenhaTemporariaModel();
+        t.setId(id);
+        t.setUsuarioId(1L);
+        t.setSenhaHash(hash);
+        return t;
     }
 
     private static UsuarioModel ana() {

@@ -24,6 +24,8 @@ public class JwtService {
 
     public static final String CLAIM_EMAIL = "email";
     public static final String CLAIM_ADMIN = "admin";
+    /** Só presente (e verdadeiro) na sessão aberta pela senha temporária (spec 016). */
+    public static final String CLAIM_TROCA_SENHA = "troca_senha";
 
     private static final String ALGORITMO_CHAVE = "HmacSHA256";
 
@@ -40,18 +42,30 @@ public class JwtService {
     }
 
     public String emitir(Long usuarioId, String email, boolean admin) {
-        return emitir(usuarioId, email, admin, Instant.now());
+        return emitir(usuarioId, email, admin, false, Instant.now());
+    }
+
+    public String emitir(Long usuarioId, String email, boolean admin, boolean trocaSenhaPendente) {
+        return emitir(usuarioId, email, admin, trocaSenhaPendente, Instant.now());
     }
 
     /** Emite como se fosse no instante informado; a expiração conta a partir dele. */
     public String emitir(Long usuarioId, String email, boolean admin, Instant emitidoEm) {
-        JwtClaimsSet claims = JwtClaimsSet.builder()
+        return emitir(usuarioId, email, admin, false, emitidoEm);
+    }
+
+    private String emitir(Long usuarioId, String email, boolean admin, boolean trocaSenhaPendente,
+                          Instant emitidoEm) {
+        JwtClaimsSet.Builder construtor = JwtClaimsSet.builder()
             .subject(String.valueOf(usuarioId))
             .claim(CLAIM_EMAIL, email)
             .claim(CLAIM_ADMIN, admin)
             .issuedAt(emitidoEm)
-            .expiresAt(emitidoEm.plus(validadeAcesso))
-            .build();
+            .expiresAt(emitidoEm.plus(validadeAcesso));
+        if (trocaSenhaPendente) {
+            construtor.claim(CLAIM_TROCA_SENHA, true);
+        }
+        JwtClaimsSet claims = construtor.build();
         JwsHeader cabecalho = JwsHeader.with(MacAlgorithm.HS256).build();
         return codificador.encode(JwtEncoderParameters.from(cabecalho, claims)).getTokenValue();
     }
