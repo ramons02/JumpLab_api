@@ -23,6 +23,8 @@ Back-end de sincronização e autenticação do JumpLab. Regras do projeto na co
 | `POST /api/auth/entrar` | pública |
 | `POST /api/auth/renovar` | pública; troca o token de renovação por um par novo |
 | `POST /api/auth/sair` | pública; revoga o token de renovação |
+| `POST /api/sync/enviar` | protegida; grava até 100 pacientes e avaliações do aparelho (vence a alteração mais recente; até 2 MB) |
+| `GET /api/sync/receber?desde=&limite=` | protegida; devolve os registros da conta mudados depois do cursor, em ordem de versão |
 | qualquer outra | `Authorization: Bearer <token de acesso>` |
 
 Contrato completo em `specs/012-conta-e-login/contracts/api.md` do `JumpLab_documentacao`. Toda resposta,

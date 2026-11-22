@@ -53,7 +53,22 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleCorpoIlegivel(HttpMessageNotReadableException e) {
+        if (causadaPorCorpoGrande(e)) {
+            return resposta(HttpStatus.CONTENT_TOO_LARGE, CorpoGrandeDemaisException.MENSAGEM);
+        }
         return resposta(HttpStatus.BAD_REQUEST, MENSAGEM_REQUISICAO_INVALIDA);
+    }
+
+    @ExceptionHandler(CorpoGrandeDemaisException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCorpoGrande(CorpoGrandeDemaisException e) {
+        return resposta(HttpStatus.CONTENT_TOO_LARGE, CorpoGrandeDemaisException.MENSAGEM);
+    }
+
+    private static boolean causadaPorCorpoGrande(Throwable e) {
+        for (Throwable causa = e; causa != null; causa = causa.getCause()) {
+            if (causa instanceof CorpoGrandeDemaisException) return true;
+        }
+        return false;
     }
 
     /**
